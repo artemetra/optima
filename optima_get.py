@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-from typing import Dict, Tuple, Union
+from typing import Dict, Tuple, Union, List
 
 import requests
 from bs4 import BeautifulSoup as Soup
@@ -11,8 +11,6 @@ import pathlib
 
 import re
 
-from datetime import datetime
-
 from utils import (print_and_exit as _exit, 
                     _time)
 
@@ -20,16 +18,13 @@ try:
     from header_config import header as raw_user_header
 except ImportError as e:
     _exit(
-        f"ImportError: Failed to import header! Maybe you haven't renamed 'template_header_config.py' to 'header_config.py'?\nFull error message:", 
-        traceback.format_exc())
+        f"Failed to import header! Maybe you haven't renamed 'template_header_config.py' to 'header_config.py'?\nFull traceback:", 
+        traceback=traceback.format_exc(), err = ImportError)
 
 
 def check_if_logged_in(html: bytes) -> bool:
-    result = Soup(html, features="lxml").find("div", class_="loginerrors mt-3")
-    if not result:
-        return True
-    else:
-        return False
+    result = Soup(html, features="lxml").find("div", class_="login-form-wrapper")
+    return True if not result else False
 
 def firefox_headers_to_dict(raw_header: str) -> Union[Tuple[str, Dict], Dict]:
     try:
@@ -48,22 +43,39 @@ def firefox_headers_to_dict(raw_header: str) -> Union[Tuple[str, Dict], Dict]:
         _exit(f"Something went wrong while parsing user header data! Make sure you pasted it correctly.\nFull exception:\n",
         traceback.format_exc())
 
-
+def collect_pages(html: bytes) -> List:
+    try:
+        res_set = Soup(html, features='lxml').find("div", class_='menuwrapper').find_all("a")
+    except Exception as e:
+        print(f"No other pages were found in this lesson or your link is not a lesson.\n[Error: {e}]")
+        return []
+    
+    urls = [res.get("href") for res in res_set]
+    print(f"Found {len(urls)} pages! Writing each...")
+    return urls
 
 def write_to_html(contents: bytes, file: str, joining = '') -> None:
+    contents = Soup(contents, features='lxml').find("div", role="main")
+    
     with open(file, 'a', encoding='utf-8') as f:
         f.write(joining)
-        f.write(contents.decode('utf-8'))
-    print(f"Successfully written to \"{file}\": {len(contents)} bytes, {len(contents.decode('utf-8'))} chars.")
+        content_repr = contents.__repr__()
+        f.write(content_repr)
+    print(f"Successfully written to \"{file}\": {len(content_repr)} chars. (Preview: {content_repr[:10]} (...) {content_repr[-10:]})")
 
-def main(url: str, headers: dict, file: str, joining = '') -> None:
-    html_content = requests.get(url, headers=headers).content
-    if check_if_logged_in(html_content):
-        write_to_html(html_content, file, joining)
+def main(init_url: str, headers: dict, file: str, joining = '') -> None:
+    init_html_content = requests.get(init_url, headers=headers).content
+    if check_if_logged_in(init_html_content):
+        write_to_html(init_html_content, file, joining)
+        if urls := collect_pages(init_html_content):
+            for url in urls:
+                html_content = requests.get(url, headers=headers).content
+                write_to_html(html_content, file, joining)
+
     else:
-        print("Error: Failed to log into the session. Your session cookie might be either expired or invalid, retry with a new header")
+        _exit("Failed to log into the session. Your session cookie is either expired or invalid, retry with a new header", err = ValueError)
 
 if __name__ == '__main__':
-    os.chdir(pathlib.Path().resolve())
+    
     dict_header = firefox_headers_to_dict(raw_user_header)
     main(dict_header[1], dict_header[0], f"ignore\\export at {_time()}.html")
